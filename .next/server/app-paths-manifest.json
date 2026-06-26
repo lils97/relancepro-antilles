@@ -1,0 +1,5 @@
+{
+  "/api/whatsapp/route": "app/api/whatsapp/route.js",
+  "/campaigns/page": "app/campaigns/page.js",
+  "/page": "app/page.js"
+}

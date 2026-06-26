@@ -1,0 +1,469 @@
+// RelancePro Antilles - Schéma Prisma
+// Version MVP 1.0
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// AUTHENTIFICATION
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  password      String?
+  role          UserRole  @default(COMMERCIAL)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  prospects     Prospect[]
+  activities    Activity[]
+  notes         Note[]
+  tasks         Task[]
+  campaigns     Campaign[]
+  templates     MessageTemplate[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  COMMERCIAL
+}
+
+// ============================================================
+// PROSPECTS
+// ============================================================
+
+model Prospect {
+  id              String          @id @default(cuid())
+  // Identité
+  firstName       String?
+  lastName        String
+  email           String?
+  phone           String?         // Format international +596696XXXXXX
+  phoneRaw        String?         // Numéro brut importé
+  phoneCountry    PhoneCountry?
+  // Localisation
+  address         String?
+  city            String?
+  postalCode      String?
+  department      String?
+  country         String          @default("Martinique")
+  // Activité
+  category        ProspectCategory @default(OTHER)
+  status          ProspectStatus   @default(NEW)
+  source          String?
+  // Scoring IA
+  aiScore         Int             @default(0)   // 0-100
+  aiScoreLabel    ScoreLabel      @default(LOW)
+  aiScoreDetails  Json?
+  lastScoreAt     DateTime?
+  // Métadonnées
+  comment         String?         @db.Text
+  project         String?
+  budget          Float?
+  tags            String[]        @default([])
+  // Consentement RGPD
+  consentSms      Boolean         @default(false)
+  consentEmail    Boolean         @default(false)
+  consentDate     DateTime?
+  // Suivi
+  assignedToId    String?
+  assignedTo      User?           @relation(fields: [assignedToId], references: [id])
+  lastContactAt   DateTime?
+  nextFollowUpAt  DateTime?
+  contractValue   Float?
+  signedAt        DateTime?
+  // Timestamps
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  importBatchId   String?
+
+  // Relations
+  activities      Activity[]
+  notes           Note[]
+  tasks           Task[]
+  messages        Message[]
+  attachments     Attachment[]
+  campaignTargets CampaignTarget[]
+
+  @@index([status])
+  @@index([category])
+  @@index([phone])
+  @@index([email])
+  @@index([aiScore])
+  @@index([city])
+  @@map("prospects")
+}
+
+enum ProspectCategory {
+  INTERNET_FIBRE
+  PANNEAUX_SOLAIRES
+  ISOLATION_THERMIQUE
+  CLIMATISATION
+  BRASSEURS_AIR
+  OTHER
+}
+
+enum ProspectStatus {
+  NEW           // Nouveau
+  TO_CONTACT    // À contacter
+  VOICEMAIL     // Messagerie
+  CALLBACK      // Rappel
+  INTERESTED    // Intéressé
+  APPOINTMENT   // RDV programmé
+  QUOTE_SENT    // Devis envoyé
+  WAITING_QUOTE // Attente devis
+  SIGNED        // Signé
+  LOST          // Perdu
+  STOP          // STOP
+}
+
+enum PhoneCountry {
+  MARTINIQUE
+  GUADELOUPE
+  FRANCE
+  OTHER
+}
+
+enum ScoreLabel {
+  HIGH    // 🔥 Priorité haute (70-100)
+  MEDIUM  // 🟠 Priorité moyenne (40-69)
+  LOW     // 🟢 Priorité faible (0-39)
+}
+
+// ============================================================
+// ACTIVITÉS (historique)
+// ============================================================
+
+model Activity {
+  id          String       @id @default(cuid())
+  type        ActivityType
+  description String       @db.Text
+  metadata    Json?
+  prospectId  String
+  prospect    Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?        @relation(fields: [userId], references: [id])
+  createdAt   DateTime     @default(now())
+
+  @@index([prospectId])
+  @@index([createdAt])
+  @@map("activities")
+}
+
+enum ActivityType {
+  SMS_SENT
+  SMS_RECEIVED
+  WHATSAPP_SENT
+  WHATSAPP_RECEIVED
+  EMAIL_SENT
+  EMAIL_OPENED
+  EMAIL_CLICKED
+  CALL_OUTGOING
+  CALL_INCOMING
+  STATUS_CHANGED
+  NOTE_ADDED
+  APPOINTMENT_CREATED
+  QUOTE_SENT
+  CONTRACT_SIGNED
+  AI_ANALYSIS
+  IMPORTED
+}
+
+// ============================================================
+// NOTES
+// ============================================================
+
+model Note {
+  id          String   @id @default(cuid())
+  content     String   @db.Text
+  prospectId  String
+  prospect    Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("notes")
+}
+
+// ============================================================
+// TÂCHES / RDV
+// ============================================================
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String?    @db.Text
+  type        TaskType   @default(CALL)
+  status      TaskStatus @default(PENDING)
+  dueAt       DateTime
+  completedAt DateTime?
+  prospectId  String?
+  prospect    Prospect?  @relation(fields: [prospectId], references: [id])
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([dueAt])
+  @@index([userId])
+  @@map("tasks")
+}
+
+enum TaskType {
+  CALL
+  APPOINTMENT
+  EMAIL
+  VISIT
+  FOLLOW_UP
+  OTHER
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// ============================================================
+// TEMPLATES DE MESSAGES
+// ============================================================
+
+model MessageTemplate {
+  id          String          @id @default(cuid())
+  name        String
+  category    ProspectCategory?
+  channel     MessageChannel
+  subject     String?         // Pour emails
+  content     String          @db.Text
+  variables   String[]        @default([]) // ["prenom", "ville", "offre"]
+  tone        MessageTone     @default(PROFESSIONAL)
+  objective   MessageObjective @default(FOLLOWUP)
+  isActive    Boolean         @default(true)
+  usageCount  Int             @default(0)
+  userId      String
+  user        User            @relation(fields: [userId], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  messages    Message[]
+
+  @@map("message_templates")
+}
+
+enum MessageChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+}
+
+enum MessageTone {
+  PROFESSIONAL
+  COMMERCIAL
+  FRIENDLY
+}
+
+enum MessageObjective {
+  APPOINTMENT
+  SALE
+  FOLLOWUP
+  REACTIVATION
+}
+
+// ============================================================
+// MESSAGES ENVOYÉS
+// ============================================================
+
+model Message {
+  id           String         @id @default(cuid())
+  channel      MessageChannel
+  direction    MessageDirection @default(OUTBOUND)
+  content      String         @db.Text
+  subject      String?
+  status       MessageStatus  @default(PENDING)
+  externalId   String?        // ID Twilio/WhatsApp/Brevo
+  errorMessage String?
+  openedAt     DateTime?
+  clickedAt    DateTime?
+  repliedAt    DateTime?
+  prospectId   String
+  prospect     Prospect       @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  templateId   String?
+  template     MessageTemplate? @relation(fields: [templateId], references: [id])
+  campaignId   String?
+  campaign     Campaign?      @relation(fields: [campaignId], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([prospectId])
+  @@index([campaignId])
+  @@map("messages")
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  BOUNCED
+}
+
+// ============================================================
+// CAMPAGNES
+// ============================================================
+
+model Campaign {
+  id            String          @id @default(cuid())
+  name          String
+  channel       MessageChannel
+  status        CampaignStatus  @default(DRAFT)
+  // Filtres cibles
+  filterCategory ProspectCategory?
+  filterStatus   ProspectStatus?
+  filterCity     String?
+  filterDepartment String?
+  // Contenu
+  templateId    String?
+  customContent String?         @db.Text
+  subject       String?
+  // Stats
+  totalTargets  Int             @default(0)
+  sentCount     Int             @default(0)
+  deliveredCount Int            @default(0)
+  openedCount   Int             @default(0)
+  repliedCount  Int             @default(0)
+  failedCount   Int             @default(0)
+  // Planning
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  userId        String
+  user          User            @relation(fields: [userId], references: [id])
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  targets       CampaignTarget[]
+  messages      Message[]
+
+  @@map("campaigns")
+}
+
+model CampaignTarget {
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  prospectId  String
+  prospect    Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  sent        Boolean  @default(false)
+  sentAt      DateTime?
+
+  @@unique([campaignId, prospectId])
+  @@map("campaign_targets")
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+// ============================================================
+// PIÈCES JOINTES
+// ============================================================
+
+model Attachment {
+  id          String   @id @default(cuid())
+  filename    String
+  mimetype    String
+  size        Int
+  url         String
+  type        AttachmentType @default(OTHER)
+  prospectId  String
+  prospect    Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@map("attachments")
+}
+
+enum AttachmentType {
+  QUOTE
+  CONTRACT
+  PHOTO
+  ID_DOCUMENT
+  OTHER
+}
+
+// ============================================================
+// IMPORT BATCH
+// ============================================================
+
+model ImportBatch {
+  id              String   @id @default(cuid())
+  filename        String
+  totalRows       Int
+  importedCount   Int      @default(0)
+  duplicateCount  Int      @default(0)
+  errorCount      Int      @default(0)
+  status          String   @default("pending")
+  columnMapping   Json?
+  errors          Json?
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+
+  @@map("import_batches")
+}
