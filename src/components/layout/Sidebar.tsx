@@ -10,6 +10,7 @@ import {
   Columns3,
   MessageSquare,
   Mail,
+  Inbox,
   Calendar,
   Sparkles,
   Settings,
@@ -25,7 +26,7 @@ import {
   AirVent,
   LogOut,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const navigation = [
   {
@@ -46,6 +47,7 @@ const navigation = [
   {
     label: 'Communication',
     items: [
+      { href: '/inbox', label: 'Messagerie', icon: Inbox },
       { href: '/campaigns', label: 'Campagnes', icon: MessageSquare },
       { href: '/templates', label: 'Templates', icon: FileText },
     ],
@@ -77,6 +79,22 @@ const categoryShortcuts = [
 export default function Sidebar() {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    const fetchUnread = async () => {
+      try {
+        const res = await fetch('/api/messages?limit=50')
+        if (res.ok) {
+          const data = await res.json()
+          setUnreadCount(data.unread || 0)
+        }
+      } catch {}
+    }
+    fetchUnread()
+    const interval = setInterval(fetchUnread, 10000)
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <aside
@@ -128,6 +146,14 @@ export default function Sidebar() {
                     >
                       <Icon className="w-4 h-4 flex-shrink-0" />
                       {!collapsed && <span className="flex-1">{item.label}</span>}
+                      {!collapsed && item.href === '/inbox' && unreadCount > 0 && (
+                        <span className="ml-auto bg-brand-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0">
+                          {unreadCount > 9 ? '9+' : unreadCount}
+                        </span>
+                      )}
+                      {collapsed && item.href === '/inbox' && unreadCount > 0 && (
+                        <span className="absolute top-0 right-0 w-2 h-2 bg-brand-500 rounded-full" />
+                      )}
                     </Link>
                   </li>
                 )
