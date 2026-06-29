@@ -45,7 +45,7 @@ export async function getInboxMessages(limit = 50): Promise<InboxMessage[]> {
 export async function markMessageRead(messageId: string): Promise<void> {
   const raw = await redis.lrange(INBOX_KEY, 0, MAX_MESSAGES - 1)
   for (let i = 0; i < raw.length; i++) {
-    const msg: InboxMessage = typeof raw[i] === 'string' ? JSON.parse(raw[i] as string) : raw[i] as InboxMessage
+    const msg: InboxMessage = typeof raw[i] === 'string' ? JSON.parse(raw[i] as string) : JSON.parse(JSON.stringify(raw[i])) as InboxMessage
     if (msg.id === messageId) {
       msg.read = true
       await redis.lset(INBOX_KEY, i, JSON.stringify(msg))
