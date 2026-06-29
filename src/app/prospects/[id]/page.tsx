@@ -124,6 +124,7 @@ export default function ProspectDetailPage() {
   const [waImageUrl, setWaImageUrl] = useState('')
   const [waImageCaption, setWaImageCaption] = useState('')
   const [waWithImage, setWaWithImage] = useState(false)
+  const [waUploading, setWaUploading] = useState(false)
   const [waSending, setWaSending] = useState(false)
   const [waResult, setWaResult] = useState<{ ok: boolean; message: string } | null>(null)
 
@@ -1030,22 +1031,57 @@ ${imgBlock}
               ) : (
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">URL de l'image <span className="text-red-500">*</span></label>
-                    <input
-                      type="url"
-                      value={waImageUrl}
-                      onChange={e => setWaImageUrl(e.target.value)}
-                      placeholder="https://exemple.com/image.jpg"
-                      className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-green-400"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">L'image doit être accessible publiquement (JPG, PNG)</p>
-                  </div>
-                  {waImageUrl && (
-                    <div className="rounded-lg overflow-hidden border border-gray-200">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={waImageUrl} alt="Aperçu" className="w-full max-h-40 object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Image <span className="text-red-500">*</span></label>
+                    <div className="mt-1">
+                      <label className={cn(
+                        'flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer transition-colors',
+                        waUploading ? 'border-green-300 bg-green-50' : 'border-gray-300 bg-gray-50 hover:border-green-400 hover:bg-green-50'
+                      )}>
+                        {waUploading ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <span className="w-6 h-6 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-sm text-green-600">Upload en cours...</span>
+                          </div>
+                        ) : waImageUrl ? (
+                          <div className="relative w-full h-full">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={waImageUrl} alt="Aperçu" className="w-full h-full object-cover rounded-lg" />
+                            <div className="absolute inset-0 bg-black/30 rounded-lg flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                              <span className="text-white text-sm font-medium">Changer l'image</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2 text-gray-400">
+                            <span className="text-3xl">🖼️</span>
+                            <span className="text-sm font-medium">Cliquez pour choisir une image</span>
+                            <span className="text-xs">JPG, PNG, WebP — max 5MB</span>
+                          </div>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0]
+                            if (!file) return
+                            setWaUploading(true)
+                            try {
+                              const fd = new FormData()
+                              fd.append('file', file)
+                              const res = await fetch('/api/upload', { method: 'POST', body: fd })
+                              const data = await res.json()
+                              if (res.ok) setWaImageUrl(data.url)
+                              else setWaResult({ ok: false, message: data.error || 'Erreur upload' })
+                            } catch {
+                              setWaResult({ ok: false, message: 'Erreur upload' })
+                            } finally {
+                              setWaUploading(false)
+                            }
+                          }}
+                        />
+                      </label>
                     </div>
-                  )}
+                  </div>
                   <div>
                     <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Légende (optionnel)</label>
                     <textarea
