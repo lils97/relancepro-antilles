@@ -121,6 +121,9 @@ export default function ProspectDetailPage() {
   // Modal WhatsApp
   const [showWaModal, setShowWaModal] = useState(false)
   const [waMessage, setWaMessage] = useState('')
+  const [waImageUrl, setWaImageUrl] = useState('')
+  const [waImageCaption, setWaImageCaption] = useState('')
+  const [waWithImage, setWaWithImage] = useState(false)
   const [waSending, setWaSending] = useState(false)
   const [waResult, setWaResult] = useState<{ ok: boolean; message: string } | null>(null)
 
@@ -147,20 +150,41 @@ export default function ProspectDetailPage() {
   }
 
   const sendWhatsApp = async () => {
-    if (!prospect?.phone || !waMessage) return
+    if (!prospect?.phone) return
+    if (!waWithImage && !waMessage) return
+    if (waWithImage && !waImageUrl) return
     setWaSending(true)
     setWaResult(null)
     try {
+      const payload: Record<string, unknown> = {
+        to: prospect.phone,
+        prospectId: prospect.id,
+      }
+      if (waWithImage) {
+        payload.imageUrl = waImageUrl
+        payload.caption = waImageCaption || waMessage
+        payload.type = 'image'
+      } else {
+        payload.message = waMessage
+        payload.type = 'text'
+      }
       const res = await fetch('/api/whatsapp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: prospect.phone, message: waMessage, prospectId: prospect.id }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (res.ok) {
         setWaResult({ ok: true, message: 'WhatsApp envoyé !' })
         loadActivities(prospect.id)
-        setTimeout(() => { setShowWaModal(false); setWaResult(null); setWaMessage('') }, 2000)
+        setTimeout(() => {
+          setShowWaModal(false)
+          setWaResult(null)
+          setWaMessage('')
+          setWaImageUrl('')
+          setWaImageCaption('')
+          setWaWithImage(false)
+        }, 2000)
       } else {
         setWaResult({ ok: false, message: data.error || 'Erreur envoi WhatsApp' })
       }
@@ -971,16 +995,70 @@ ${imgBlock}
                   {prospect.firstName} {prospect.lastName} — {formatPhoneDisplay(prospect.phone || '')}
                 </div>
               </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Message</label>
-                <textarea
-                  value={waMessage}
-                  onChange={e => setWaMessage(e.target.value)}
-                  placeholder="Bonjour, je vous contacte au sujet de..."
-                  rows={5}
-                  className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-green-400 resize-none"
-                />
+
+              {/* Toggle image */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setWaWithImage(false)}
+                  className={cn('flex-1 py-2 rounded-lg text-sm font-medium border-2 transition-all',
+                    !waWithImage ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-500'
+                  )}
+                >
+                  💬 Texte
+                </button>
+                <button
+                  onClick={() => setWaWithImage(true)}
+                  className={cn('flex-1 py-2 rounded-lg text-sm font-medium border-2 transition-all',
+                    waWithImage ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-500'
+                  )}
+                >
+                  🖼️ Image
+                </button>
               </div>
+
+              {!waWithImage ? (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Message</label>
+                  <textarea
+                    value={waMessage}
+                    onChange={e => setWaMessage(e.target.value)}
+                    placeholder="Bonjour, je vous contacte au sujet de..."
+                    rows={5}
+                    className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-green-400 resize-none"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">URL de l'image <span className="text-red-500">*</span></label>
+                    <input
+                      type="url"
+                      value={waImageUrl}
+                      onChange={e => setWaImageUrl(e.target.value)}
+                      placeholder="https://exemple.com/image.jpg"
+                      className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-green-400"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">L'image doit être accessible publiquement (JPG, PNG)</p>
+                  </div>
+                  {waImageUrl && (
+                    <div className="rounded-lg overflow-hidden border border-gray-200">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={waImageUrl} alt="Aperçu" className="w-full max-h-40 object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                    </div>
+                  )}
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Légende (optionnel)</label>
+                    <textarea
+                      value={waImageCaption}
+                      onChange={e => setWaImageCaption(e.target.value)}
+                      placeholder="Description ou message accompagnant l'image..."
+                      rows={3}
+                      className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-green-400 resize-none"
+                    />
+                  </div>
+                </div>
+              )}
+
               {waResult && (
                 <div className={cn('px-4 py-3 rounded-lg text-sm font-medium', waResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700')}>
                   {waResult.ok ? '✅' : '❌'} {waResult.message}
@@ -991,7 +1069,7 @@ ${imgBlock}
               <button onClick={() => { setShowWaModal(false); setWaResult(null) }} className="px-4 py-2 text-sm text-gray-600 font-medium">Annuler</button>
               <button
                 onClick={sendWhatsApp}
-                disabled={waSending || !waMessage}
+                disabled={waSending || (!waWithImage && !waMessage) || (waWithImage && !waImageUrl)}
                 className="flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
                 {waSending ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <MessageSquare className="w-4 h-4" />}

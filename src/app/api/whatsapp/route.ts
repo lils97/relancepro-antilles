@@ -7,10 +7,16 @@ import { parsePhone } from '@/lib/phone-utils'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { to, message, prospectId } = body
+    const { to, message, prospectId, type, imageUrl, caption } = body
 
-    if (!to || !message) {
-      return NextResponse.json({ error: 'Numéro et message requis' }, { status: 400 })
+    if (!to) {
+      return NextResponse.json({ error: 'Numéro requis' }, { status: 400 })
+    }
+    if (type === 'image' && !imageUrl) {
+      return NextResponse.json({ error: 'URL image requise' }, { status: 400 })
+    }
+    if (type !== 'image' && !message) {
+      return NextResponse.json({ error: 'Message requis' }, { status: 400 })
     }
 
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -31,12 +37,28 @@ export async function POST(request: NextRequest) {
 
     const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
 
-    const payload = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: toNumber,
-      type: 'text',
-      text: { preview_url: false, body: message },
+    // Construire le payload selon le type de message
+    let payload: Record<string, unknown>
+
+    if (type === 'image') {
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: toNumber,
+        type: 'image',
+        image: {
+          link: imageUrl,
+          ...(caption ? { caption } : {}),
+        },
+      }
+    } else {
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: toNumber,
+        type: 'text',
+        text: { preview_url: false, body: message },
+      }
     }
 
     const res = await fetch(url, {
@@ -66,7 +88,9 @@ export async function POST(request: NextRequest) {
         addActivity({
           prospectId,
           type: 'WHATSAPP_SENT',
-          content: message,
+          content: type === 'image'
+            ? `🖼️ Image envoyée${caption ? ` : ${caption}` : ''}`
+            : message,
         })
       } catch {}
     }
