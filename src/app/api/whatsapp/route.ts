@@ -39,14 +39,12 @@ export async function POST(request: NextRequest) {
 
     if (useTemplate || type === 'template') {
       // ── Envoi via modèle approuvé "solargeo" ──
-      const components: Record<string, unknown>[] = []
-
-      // Header image (si une image est fournie)
-      if (imageUrl) {
-        components.push({
-          type: 'header',
-          parameters: [{ type: 'image', image: { link: imageUrl } }],
-        })
+      // Le modèle a une image en en-tête OBLIGATOIRE
+      if (!imageUrl) {
+        return NextResponse.json(
+          { error: 'Une image est obligatoire pour ce modèle. Choisissez une image avant d\'envoyer.' },
+          { status: 400 }
+        )
       }
 
       payload = {
@@ -57,7 +55,12 @@ export async function POST(request: NextRequest) {
         template: {
           name: TEMPLATE_NAME,
           language: { code: TEMPLATE_LANG },
-          ...(components.length > 0 ? { components } : {}),
+          components: [
+            {
+              type: 'header',
+              parameters: [{ type: 'image', image: { link: imageUrl } }],
+            },
+          ],
         },
       }
     } else if (type === 'image') {

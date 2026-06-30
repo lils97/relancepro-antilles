@@ -1020,7 +1020,7 @@ ${imgBlock}
               {/* Modèle approuvé */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                 <p className="text-xs font-semibold text-green-800 mb-1">✅ Modèle approuvé Meta — fonctionne toujours</p>
-                <p className="text-xs text-green-700 mb-2">Envoie le message Solargeo officiel avec ton image (optionnel). Idéal pour contacter un client en premier.</p>
+                <p className="text-xs text-green-700 mb-2">Envoie le message Solargeo officiel. <strong>Image obligatoire</strong> — choisis une image ci-dessus d'abord.</p>
                 <button
                   onClick={async () => {
                     if (!prospect?.phone) return
