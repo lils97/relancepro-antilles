@@ -4,19 +4,17 @@ import { parsePhone } from '@/lib/phone-utils'
 // Meta WhatsApp Business API
 // Docs : https://developers.facebook.com/docs/whatsapp/cloud-api/messages
 
+// Modèle approuvé Meta : "solargeo" (fr) — image + texte fixe
+const TEMPLATE_NAME = 'solargeo'
+const TEMPLATE_LANG = 'fr'
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { to, message, prospectId, type, imageUrl, caption } = body
+    const { to, message, prospectId, type, imageUrl, caption, useTemplate } = body
 
     if (!to) {
       return NextResponse.json({ error: 'Numéro requis' }, { status: 400 })
-    }
-    if (type === 'image' && !imageUrl) {
-      return NextResponse.json({ error: 'URL image requise' }, { status: 400 })
-    }
-    if (type !== 'image' && !message) {
-      return NextResponse.json({ error: 'Message requis' }, { status: 400 })
     }
 
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -24,23 +22,46 @@ export async function POST(request: NextRequest) {
 
     if (!phoneNumberId || !accessToken) {
       return NextResponse.json(
-        { error: 'WhatsApp non configuré. Ajoutez WHATSAPP_PHONE_NUMBER_ID et WHATSAPP_ACCESS_TOKEN dans .env' },
+        { error: 'WhatsApp non configuré.' },
         { status: 500 }
       )
     }
 
-    // Normaliser le numéro (Martinique, Guadeloupe, France, etc.)
+    // Normaliser le numéro
     const parsed = parsePhone(to)
     const toNumber = parsed.formatted
-      ? parsed.formatted.replace('+', '')  // Meta attend sans le +
-      : to.replace(/\D/g, '')             // Fallback : chiffres bruts
+      ? parsed.formatted.replace('+', '')
+      : to.replace(/\D/g, '')
 
     const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
 
-    // Construire le payload selon le type de message
     let payload: Record<string, unknown>
 
-    if (type === 'image') {
+    if (useTemplate || type === 'template') {
+      // ── Envoi via modèle approuvé "solargeo" ──
+      const components: Record<string, unknown>[] = []
+
+      // Header image (si une image est fournie)
+      if (imageUrl) {
+        components.push({
+          type: 'header',
+          parameters: [{ type: 'image', image: { link: imageUrl } }],
+        })
+      }
+
+      payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: toNumber,
+        type: 'template',
+        template: {
+          name: TEMPLATE_NAME,
+          language: { code: TEMPLATE_LANG },
+          ...(components.length > 0 ? { components } : {}),
+        },
+      }
+    } else if (type === 'image') {
+      // ── Image libre (fonctionne si le client a écrit dans les 24h) ──
       payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -52,6 +73,7 @@ export async function POST(request: NextRequest) {
         },
       }
     } else {
+      // ── Texte libre (fonctionne si le client a écrit dans les 24h) ──
       payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -81,16 +103,17 @@ export async function POST(request: NextRequest) {
 
     const data = await res.json()
 
-    // Enregistrer l'activité
     if (prospectId) {
       try {
         const { addActivity } = await import('@/lib/activity-store')
         addActivity({
           prospectId,
           type: 'WHATSAPP_SENT',
-          content: type === 'image'
-            ? `🖼️ Image envoyée${caption ? ` : ${caption}` : ''}`
-            : message,
+          content: useTemplate
+            ? `📋 Modèle "solargeo" envoyé${imageUrl ? ' avec image' : ''}`
+            : type === 'image'
+              ? `🖼️ Image envoyée${caption ? ` : ${caption}` : ''}`
+              : message,
         })
       } catch {}
     }

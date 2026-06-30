@@ -997,24 +997,69 @@ ${imgBlock}
                 </div>
               </div>
 
-              {/* Toggle image */}
-              <div className="flex items-center gap-3">
+              {/* Toggle mode */}
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setWaWithImage(false)}
-                  className={cn('flex-1 py-2 rounded-lg text-sm font-medium border-2 transition-all',
+                  onClick={() => { setWaWithImage(false) }}
+                  className={cn('flex-1 py-2 rounded-lg text-xs font-medium border-2 transition-all',
                     !waWithImage ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-500'
                   )}
                 >
-                  💬 Texte
+                  💬 Texte libre
                 </button>
                 <button
                   onClick={() => setWaWithImage(true)}
-                  className={cn('flex-1 py-2 rounded-lg text-sm font-medium border-2 transition-all',
+                  className={cn('flex-1 py-2 rounded-lg text-xs font-medium border-2 transition-all',
                     waWithImage ? 'border-green-500 bg-green-50 text-green-700' : 'border-gray-200 text-gray-500'
                   )}
                 >
-                  🖼️ Image
+                  🖼️ Image libre
                 </button>
+              </div>
+
+              {/* Modèle approuvé */}
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-green-800 mb-1">✅ Modèle approuvé Meta — fonctionne toujours</p>
+                <p className="text-xs text-green-700 mb-2">Envoie le message Solargeo officiel avec ton image (optionnel). Idéal pour contacter un client en premier.</p>
+                <button
+                  onClick={async () => {
+                    if (!prospect?.phone) return
+                    setWaSending(true)
+                    setWaResult(null)
+                    try {
+                      const payload: Record<string, unknown> = {
+                        to: prospect.phone,
+                        prospectId: prospect.id,
+                        useTemplate: true,
+                      }
+                      if (waWithImage && waImageUrl) payload.imageUrl = waImageUrl
+                      const res = await fetch('/api/whatsapp', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      })
+                      const data = await res.json()
+                      if (res.ok) {
+                        setWaResult({ ok: true, message: 'Modèle Solargeo envoyé !' })
+                        loadActivities(prospect.id)
+                        setTimeout(() => { setShowWaModal(false); setWaResult(null); setWaImageUrl(''); setWaWithImage(false) }, 2000)
+                      } else {
+                        setWaResult({ ok: false, message: data.error || 'Erreur' })
+                      }
+                    } catch { setWaResult({ ok: false, message: 'Erreur réseau' }) }
+                    finally { setWaSending(false) }
+                  }}
+                  disabled={waSending}
+                  className="w-full py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {waSending ? '...' : '📤 Envoyer le modèle Solargeo'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span>ou message libre (si client a répondu dans les 24h)</span>
+                <div className="flex-1 h-px bg-gray-200" />
               </div>
 
               {!waWithImage ? (
