@@ -11,7 +11,7 @@ const TEMPLATE_LANG = 'fr'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { to, message, prospectId, type, imageUrl, caption, useTemplate } = body
+    const { to, message, prospectId, type, imageUrl, caption, useTemplate, firstName } = body
 
     if (!to) {
       return NextResponse.json({ error: 'Numéro requis' }, { status: 400 })
@@ -59,6 +59,12 @@ export async function POST(request: NextRequest) {
             {
               type: 'header',
               parameters: [{ type: 'image', image: { link: imageUrl } }],
+            },
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', parameter_name: 'first_name', text: firstName || 'cher(e) client(e)' },
+              ],
             },
           ],
         },

@@ -1031,6 +1031,7 @@ ${imgBlock}
                         to: prospect.phone,
                         prospectId: prospect.id,
                         useTemplate: true,
+                        firstName: `${prospect.firstName ?? ''} ${prospect.lastName}`.trim(),
                       }
                       if (waWithImage && waImageUrl) payload.imageUrl = waImageUrl
                       const res = await fetch('/api/whatsapp', {
