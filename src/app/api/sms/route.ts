@@ -8,14 +8,15 @@ import { parsePhone } from '@/lib/phone-utils'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { to, message, prospectId } = body
+    const { to, message, prospectId, sender: bodySender } = body
 
     if (!to || !message) {
       return NextResponse.json({ error: 'Numéro et message requis' }, { status: 400 })
     }
 
     const apiKey = process.env.BREVO_API_KEY
-    const sender = process.env.TWILIO_SENDER_ID || 'Solargeo' // Réutilise le Sender ID alphanumérique (max 11 caractères)
+    // Priorité : sender passé depuis l'UI → variable d'env → valeur par défaut
+    const sender = (bodySender as string)?.trim() || process.env.TWILIO_SENDER_ID || 'Solargeo'
 
     if (!apiKey) {
       return NextResponse.json(

@@ -115,6 +115,7 @@ export default function ProspectDetailPage() {
   // Modal SMS
   const [showSmsModal, setShowSmsModal] = useState(false)
   const [smsMessage, setSmsMessage] = useState('')
+  const [smsSender, setSmsSender] = useState('Solargeo')
   const [smsSending, setSmsSending] = useState(false)
   const [smsResult, setSmsResult] = useState<{ ok: boolean; message: string } | null>(null)
 
@@ -136,7 +137,7 @@ export default function ProspectDetailPage() {
       const res = await fetch('/api/sms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: prospect.phone, message: smsMessage, prospectId: prospect.id }),
+        body: JSON.stringify({ to: prospect.phone, message: smsMessage, prospectId: prospect.id, sender: smsSender }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -945,6 +946,30 @@ ${imgBlock}
                 <div className="mt-1 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200 text-sm text-gray-700">
                   {prospect.firstName} {prospect.lastName} — {formatPhoneDisplay(prospect.phone || '')}
                 </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Expéditeur (ID affiché au client)</label>
+                <div className="mt-1 flex gap-2 flex-wrap">
+                  {['Solargeo', 'Commercial', 'Fibre'].map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setSmsSender(s)}
+                      className={cn(
+                        'px-3 py-1 rounded-full text-xs font-medium border transition-colors',
+                        smsSender === s
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                      )}
+                    >{s}</button>
+                  ))}
+                </div>
+                <input
+                  value={smsSender}
+                  onChange={e => setSmsSender(e.target.value)}
+                  placeholder="Nom personnalisé"
+                  className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-blue-400"
+                />
+                <p className="text-xs text-gray-400 mt-1">{smsSender.length} caractères</p>
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Message</label>
