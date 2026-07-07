@@ -91,7 +91,7 @@ function CampaignsPageInner() {
   const [filterStatus, setFilterStatus] = useState<Campaign['status'] | ''>('')
   const [sending, setSending] = useState(false)
   const [sendProgress, setSendProgress] = useState<{ done: number; total: number } | null>(null)
-  const [sendResult, setSendResult] = useState<{ total: number; sent: number; failed: number } | null>(null)
+  const [sendResult, setSendResult] = useState<{ total: number; sent: number; failed: number; errors: { name: string; reason: string }[] } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const [newCampaign, setNewCampaign] = useState({
@@ -190,59 +190,66 @@ ${imgBlock}
     let sent = 0
     let failed = 0
     let cancelled = false
+    const errors: { name: string; reason: string }[] = []
+
+    const sendOne = async (prospect: (typeof targets)[0]): Promise<'ok' | 'abort' | string> => {
+      try {
+        let res: Response
+        if (channel === 'EMAIL') {
+          res = await fetch('/api/email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              to: prospect.email,
+              toName: `${prospect.firstName ?? ''} ${prospect.lastName}`.trim(),
+              subject: campaignName,
+              htmlContent,
+              textContent,
+              attachments: attachmentsSnapshot,
+            }),
+          })
+        } else if (channel === 'SMS') {
+          res = await fetch('/api/sms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ to: prospect.phone, message: textContent, prospectId: prospect.id }),
+          })
+        } else {
+          res = await fetch('/api/whatsapp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({ to: prospect.phone, message: textContent, prospectId: prospect.id }),
+          })
+        }
+        if (res.ok) return 'ok'
+        const data = await res.json().catch(() => ({}))
+        return data.error || `Erreur ${res.status}`
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === 'AbortError') return 'abort'
+        return e instanceof Error ? e.message : 'Erreur réseau'
+      }
+    }
 
     const BATCH = 5
     for (let i = 0; i < targets.length; i += BATCH) {
       if (controller.signal.aborted) { cancelled = true; break }
       const batch = targets.slice(i, i + BATCH)
-      const results = await Promise.allSettled(
-        batch.map(prospect => {
-          if (channel === 'EMAIL') {
-            return fetch('/api/email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                to: prospect.email,
-                toName: `${prospect.firstName ?? ''} ${prospect.lastName}`.trim(),
-                subject: campaignName,
-                htmlContent,
-                textContent,
-                attachments: attachmentsSnapshot,
-              }),
-            }).then(r => r.ok ? 'ok' : 'fail').catch(e => e?.name === 'AbortError' ? 'abort' : 'fail')
-          } else if (channel === 'SMS') {
-            return fetch('/api/sms', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                to: prospect.phone,
-                message: textContent,
-                prospectId: prospect.id,
-              }),
-            }).then(r => r.ok ? 'ok' : 'fail').catch(e => e?.name === 'AbortError' ? 'abort' : 'fail')
-          } else {
-            // WhatsApp
-            return fetch('/api/whatsapp', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                to: prospect.phone,
-                message: textContent,
-                prospectId: prospect.id,
-              }),
-            }).then(r => r.ok ? 'ok' : 'fail').catch(e => e?.name === 'AbortError' ? 'abort' : 'fail')
-          }
-        })
-      )
-      for (const r of results) {
+      const results = await Promise.allSettled(batch.map(p => sendOne(p)))
+      for (let j = 0; j < results.length; j++) {
+        const r = results[j]
+        const prospect = batch[j]
+        const name = `${prospect.firstName ?? ''} ${prospect.lastName}`.trim()
         if (r.status === 'fulfilled') {
           if (r.value === 'ok') sent++
-          else if (r.value === 'abort') { cancelled = true }
-          else failed++
-        } else failed++
+          else if (r.value === 'abort') cancelled = true
+          else { failed++; errors.push({ name, reason: r.value }) }
+        } else {
+          failed++
+          errors.push({ name, reason: r.reason?.message || 'Erreur inconnue' })
+        }
       }
       setSendProgress({ done: Math.min(i + BATCH, targets.length), total: targets.length })
       if (cancelled) break
@@ -263,7 +270,7 @@ ${imgBlock}
       createdAt: new Date().toISOString(),
     }
     setCampaigns(prev => [newCamp, ...prev])
-    setSendResult({ total: targets.length, sent, failed })
+    setSendResult({ total: targets.length, sent, failed, errors })
     setSending(false)
     setSendProgress(null)
     abortRef.current = null
@@ -365,25 +372,43 @@ ${imgBlock}
               {/* Résultat dernier envoi */}
               {sendResult && !sending && (
                 <div className={cn(
-                  'border rounded-xl p-4 flex items-center gap-3',
-                  sendResult.sent > 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'
+                  'border rounded-xl p-4',
+                  sendResult.sent > 0 && sendResult.failed === 0 ? 'bg-green-50 border-green-200' :
+                  sendResult.failed > 0 && sendResult.sent > 0 ? 'bg-amber-50 border-amber-200' :
+                  'bg-red-50 border-red-200'
                 )}>
-                  {sendResult.sent > 0
-                    ? <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-                    : <XCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
-                  }
-                  <div>
-                    <p className={cn('text-sm font-semibold', sendResult.sent > 0 ? 'text-green-800' : 'text-amber-800')}>
-                      {sendResult.sent > 0 ? 'Campagne envoyée !' : 'Campagne annulée'}
-                    </p>
-                    <p className={cn('text-sm', sendResult.sent > 0 ? 'text-green-700' : 'text-amber-700')}>
-                      {sendResult.sent} email{sendResult.sent > 1 ? 's' : ''} envoyé{sendResult.sent > 1 ? 's' : ''} sur {sendResult.total} cibles
-                      {sendResult.failed > 0 && ` — ${sendResult.failed} échec(s)`}
-                    </p>
+                  <div className="flex items-start gap-3">
+                    {sendResult.failed === 0
+                      ? <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                      : <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                    }
+                    <div className="flex-1 min-w-0">
+                      <p className={cn('text-sm font-semibold',
+                        sendResult.failed === 0 ? 'text-green-800' :
+                        sendResult.sent > 0 ? 'text-amber-800' : 'text-red-800'
+                      )}>
+                        {sendResult.failed === 0 ? 'Campagne envoyée avec succès !' :
+                         sendResult.sent > 0 ? `${sendResult.sent} envoyé(s), ${sendResult.failed} échec(s)` :
+                         'Échec — aucun message envoyé'}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {sendResult.sent} / {sendResult.total} message{sendResult.total > 1 ? 's' : ''} envoyé{sendResult.sent > 1 ? 's' : ''}
+                      </p>
+                      {sendResult.errors.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {sendResult.errors.map((e, i) => (
+                            <div key={i} className="flex items-start gap-2 text-xs bg-white/70 rounded-lg px-2 py-1.5 border border-red-100">
+                              <span className="font-semibold text-red-700 flex-shrink-0">{e.name || 'Inconnu'} :</span>
+                              <span className="text-red-600 break-all">{e.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={() => setSendResult(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button onClick={() => setSendResult(null)} className="ml-auto text-gray-400 hover:text-gray-600">
-                    <X className="w-4 h-4" />
-                  </button>
                 </div>
               )}
 
