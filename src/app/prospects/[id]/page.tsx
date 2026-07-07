@@ -143,6 +143,8 @@ export default function ProspectDetailPage() {
       if (res.ok) {
         setSmsResult({ ok: true, message: 'SMS envoyé !' })
         loadActivities(prospect.id)
+        const { recordContact } = await import('@/lib/contact-history')
+        recordContact(prospect.id, 'SMS')
         setTimeout(() => { setShowSmsModal(false); setSmsResult(null); setSmsMessage('') }, 2000)
       } else {
         setSmsResult({ ok: false, message: data.error || 'Erreur envoi SMS' })
@@ -179,6 +181,8 @@ export default function ProspectDetailPage() {
       if (res.ok) {
         setWaResult({ ok: true, message: 'WhatsApp envoyé !' })
         loadActivities(prospect.id)
+        const { recordContact } = await import('@/lib/contact-history')
+        recordContact(prospect.id, 'WHATSAPP')
         setTimeout(() => {
           setShowWaModal(false)
           setWaResult(null)
@@ -248,6 +252,8 @@ ${imgBlock}
       if (res.ok) {
         setEmailResult({ ok: true, message: 'Email envoyé avec succès !' })
         loadActivities(prospect.id)
+        const { recordContact } = await import('@/lib/contact-history')
+        recordContact(prospect.id, 'EMAIL')
         setTimeout(() => { setShowEmailModal(false); setEmailResult(null); setEmailSubject(''); setEmailBody(''); setEmailImageUrl(''); setEmailAttachments([]) }, 2000)
       } else {
         setEmailResult({ ok: false, message: data.error || 'Erreur lors de l\'envoi' })

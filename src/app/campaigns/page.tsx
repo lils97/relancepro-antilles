@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils'
 import type { MessageChannel } from '@/types'
 import { formatDate } from '@/lib/utils'
+import { getContactedIds, recordContacts } from '@/lib/contact-history'
 
 interface Campaign {
   id: string
@@ -91,7 +92,13 @@ function CampaignsPageInner() {
   const [filterStatus, setFilterStatus] = useState<Campaign['status'] | ''>('')
   const [sending, setSending] = useState(false)
   const [sendProgress, setSendProgress] = useState<{ done: number; total: number } | null>(null)
-  const [sendResult, setSendResult] = useState<{ total: number; sent: number; failed: number; errors: { name: string; reason: string }[] } | null>(null)
+  type SendResult = {
+    total: number; sent: number; failed: number
+    errors: { name: string; reason: string }[]
+    failedProspects: import('@/types').Prospect[]
+    retryContext: { channel: MessageChannel; htmlContent: string; textContent: string; campaignName: string; attachmentsSnapshot: { name: string; content: string }[] }
+  }
+  const [sendResult, setSendResult] = useState<SendResult | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const [newCampaign, setNewCampaign] = useState({
@@ -106,6 +113,10 @@ function CampaignsPageInner() {
   })
   const [showPreview, setShowPreview] = useState(false)
   const [campaignAttachments, setCampaignAttachments] = useState<{ name: string; content: string; size: number }[]>([])
+  const [waUseTemplate, setWaUseTemplate] = useState(true)
+  const [waCampaignImageUrl, setWaCampaignImageUrl] = useState('')
+  const [waCampaignUploading, setWaCampaignUploading] = useState(false)
+  const [excludeAlreadyContacted, setExcludeAlreadyContacted] = useState(true)
 
   const handleCampaignFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
@@ -144,35 +155,34 @@ ${imgBlock}
     abortRef.current?.abort()
   }
 
+  const handleWaCampaignImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setWaCampaignUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/upload', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (res.ok) setWaCampaignImageUrl(data.url)
+    } catch {}
+    setWaCampaignUploading(false)
+    e.target.value = ''
+  }
+
   const supprimerCampagne = (id: string) => {
     if (!window.confirm('Supprimer cette campagne ?')) return
     setCampaigns(prev => prev.filter(c => c.id !== id))
   }
 
-  const lancerCampagne = async () => {
-    if (!newCampaign.name || !newCampaign.customContent) {
-      alert('Donnez un nom et un message à la campagne.')
-      return
-    }
-
-    const { getProspects } = await import('@/lib/prospect-store')
-    const channel = newCampaign.channel
-
-    // Filtrer selon le canal : email ou téléphone
-    let targets = getProspects().filter(p => channel === 'EMAIL' ? !!p.email : !!p.phone)
-    if (newCampaign.filterCategory) targets = targets.filter(p => p.category === newCampaign.filterCategory)
-    if (newCampaign.filterStatus) targets = targets.filter(p => p.status === newCampaign.filterStatus)
-    if (newCampaign.filterCity) targets = targets.filter(p => p.city?.toLowerCase().includes(newCampaign.filterCity.toLowerCase()))
-
-    if (targets.length === 0) {
-      alert(`Aucun prospect avec un ${channel === 'EMAIL' ? 'email' : 'numéro de téléphone'} ne correspond à vos filtres.`)
-      return
-    }
-
-    const channelLabel = channel === 'EMAIL' ? 'email' : channel === 'SMS' ? 'SMS' : 'WhatsApp'
-    const ok = window.confirm(`Envoyer "${newCampaign.name}" à ${targets.length} prospect(s) par ${channelLabel} ?`)
-    if (!ok) return
-
+  const runSendLoop = async (
+    targets: import('@/types').Prospect[],
+    channel: MessageChannel,
+    htmlContent: string,
+    textContent: string,
+    campaignName: string,
+    attachmentsSnapshot: { name: string; content: string }[],
+  ) => {
     const controller = new AbortController()
     abortRef.current = controller
     setSending(true)
@@ -180,19 +190,13 @@ ${imgBlock}
     setSendProgress({ done: 0, total: targets.length })
     setActiveTab('list')
 
-    const htmlContent = buildCampaignHtml(newCampaign.customContent, newCampaign.imageUrl)
-    const textContent = newCampaign.customContent
-    const campaignName = newCampaign.name
-    const attachmentsSnapshot = campaignAttachments.map(a => ({ name: a.name, content: a.content }))
-    setNewCampaign({ name: '', channel: 'SMS', filterCategory: '', filterStatus: '', filterCity: '', customContent: '', imageUrl: '', scheduledAt: '' })
-    setCampaignAttachments([])
-
     let sent = 0
     let failed = 0
     let cancelled = false
     const errors: { name: string; reason: string }[] = []
+    const failedProspects: import('@/types').Prospect[] = []
 
-    const sendOne = async (prospect: (typeof targets)[0]): Promise<'ok' | 'abort' | string> => {
+    const sendOne = async (prospect: import('@/types').Prospect): Promise<'ok' | 'abort' | string> => {
       try {
         let res: Response
         if (channel === 'EMAIL') {
@@ -221,7 +225,17 @@ ${imgBlock}
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: controller.signal,
-            body: JSON.stringify({ to: prospect.phone, message: textContent, prospectId: prospect.id }),
+            body: JSON.stringify(waUseTemplate ? {
+              to: prospect.phone,
+              prospectId: prospect.id,
+              useTemplate: true,
+              imageUrl: waCampaignImageUrl,
+              firstName: `${prospect.firstName ?? ''} ${prospect.lastName}`.trim(),
+            } : {
+              to: prospect.phone,
+              message: textContent,
+              prospectId: prospect.id,
+            }),
           })
         }
         if (res.ok) return 'ok'
@@ -245,15 +259,74 @@ ${imgBlock}
         if (r.status === 'fulfilled') {
           if (r.value === 'ok') sent++
           else if (r.value === 'abort') cancelled = true
-          else { failed++; errors.push({ name, reason: r.value }) }
+          else { failed++; errors.push({ name, reason: r.value }); failedProspects.push(prospect) }
         } else {
           failed++
           errors.push({ name, reason: r.reason?.message || 'Erreur inconnue' })
+          failedProspects.push(prospect)
         }
       }
       setSendProgress({ done: Math.min(i + BATCH, targets.length), total: targets.length })
       if (cancelled) break
     }
+
+    // Enregistrer les envois réussis dans l'historique
+    const succeededIds = targets
+      .filter((_, i) => {
+        // On récupère les prospects qui ne sont PAS dans failedProspects
+        return !failedProspects.find(fp => fp.id === targets[i]?.id)
+      })
+      .map(p => p.id)
+    if (succeededIds.length > 0) recordContacts(succeededIds, channel as import('@/lib/contact-history').ContactChannel)
+
+    return { sent, failed, cancelled, errors, failedProspects }
+  }
+
+  const lancerCampagne = async () => {
+    if (!newCampaign.name || (!newCampaign.customContent && !(newCampaign.channel === 'WHATSAPP' && waUseTemplate))) {
+      alert('Donnez un nom et un message à la campagne.')
+      return
+    }
+
+    const { getProspects } = await import('@/lib/prospect-store')
+    const channel = newCampaign.channel
+
+    let targets = getProspects().filter(p => channel === 'EMAIL' ? !!p.email : !!p.phone)
+    if (newCampaign.filterCategory) targets = targets.filter(p => p.category === newCampaign.filterCategory)
+    if (newCampaign.filterStatus) targets = targets.filter(p => p.status === newCampaign.filterStatus)
+    if (newCampaign.filterCity) targets = targets.filter(p => p.city?.toLowerCase().includes(newCampaign.filterCity.toLowerCase()))
+
+    // Exclure les déjà contactés si option activée
+    let excludedCount = 0
+    if (excludeAlreadyContacted) {
+      const alreadyContacted = getContactedIds(channel as import('@/lib/contact-history').ContactChannel)
+      const before = targets.length
+      targets = targets.filter(p => !alreadyContacted.has(p.id))
+      excludedCount = before - targets.length
+    }
+
+    if (targets.length === 0) {
+      if (excludedCount > 0) {
+        alert(`Tous les prospects ont déjà reçu un message sur ce canal (${excludedCount} exclus).\n\nDésactivez "Exclure déjà contactés" si vous voulez renvoyer.`)
+      } else {
+        alert(`Aucun prospect avec un ${channel === 'EMAIL' ? 'email' : 'numéro de téléphone'} ne correspond à vos filtres.`)
+      }
+      return
+    }
+
+    const channelLabel = channel === 'EMAIL' ? 'email' : channel === 'SMS' ? 'SMS' : 'WhatsApp'
+    const excludedMsg = excludedCount > 0 ? `\n(${excludedCount} déjà contacté(s) exclus)` : ''
+    const ok = window.confirm(`Envoyer "${newCampaign.name}" à ${targets.length} prospect(s) par ${channelLabel} ?${excludedMsg}`)
+    if (!ok) return
+
+    const htmlContent = buildCampaignHtml(newCampaign.customContent, newCampaign.imageUrl)
+    const textContent = newCampaign.customContent
+    const campaignName = newCampaign.name
+    const attachmentsSnapshot = campaignAttachments.map(a => ({ name: a.name, content: a.content }))
+    setNewCampaign({ name: '', channel: 'SMS', filterCategory: '', filterStatus: '', filterCity: '', customContent: '', imageUrl: '', scheduledAt: '' })
+    setCampaignAttachments([])
+
+    const { sent, failed, cancelled, errors, failedProspects } = await runSendLoop(targets, channel, htmlContent, textContent, campaignName, attachmentsSnapshot)
 
     const newCamp: Campaign = {
       id: crypto.randomUUID(),
@@ -270,7 +343,28 @@ ${imgBlock}
       createdAt: new Date().toISOString(),
     }
     setCampaigns(prev => [newCamp, ...prev])
-    setSendResult({ total: targets.length, sent, failed, errors })
+    const retryContext = { channel, htmlContent, textContent, campaignName, attachmentsSnapshot }
+    setSendResult({ total: targets.length, sent, failed, errors, failedProspects, retryContext })
+    setSending(false)
+    setSendProgress(null)
+    abortRef.current = null
+  }
+
+  const retryCampagne = async () => {
+    if (!sendResult || sendResult.failedProspects.length === 0) return
+    const { failedProspects, retryContext } = sendResult
+    const ok = window.confirm(`Réessayer pour ${failedProspects.length} prospect(s) en échec ?`)
+    if (!ok) return
+    const { sent, failed, cancelled, errors, failedProspects: newFailed } = await runSendLoop(
+      failedProspects,
+      retryContext.channel,
+      retryContext.htmlContent,
+      retryContext.textContent,
+      retryContext.campaignName,
+      retryContext.attachmentsSnapshot,
+    )
+    const retryCtx = { ...retryContext }
+    setSendResult({ total: failedProspects.length, sent, failed, errors, failedProspects: newFailed, retryContext: retryCtx })
     setSending(false)
     setSendProgress(null)
     abortRef.current = null
@@ -403,6 +497,15 @@ ${imgBlock}
                             </div>
                           ))}
                         </div>
+                      )}
+                      {sendResult.failedProspects.length > 0 && (
+                        <button
+                          onClick={retryCampagne}
+                          disabled={sending}
+                          className="mt-3 flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50 transition-colors"
+                        >
+                          🔄 Réessayer pour {sendResult.failedProspects.length} prospect{sendResult.failedProspects.length > 1 ? 's' : ''} en échec
+                        </button>
                       )}
                     </div>
                     <button onClick={() => setSendResult(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
@@ -603,6 +706,54 @@ ${imgBlock}
                     />
                   </div>
 
+                  {/* Bloc WhatsApp template */}
+                  {newCampaign.channel === 'WHATSAPP' && (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+                      <p className="text-xs font-semibold text-green-800">✅ Modèle approuvé Meta — Solargeo</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setWaUseTemplate(true)}
+                          className={cn('flex-1 py-2 rounded-lg text-xs font-medium border-2 transition-all',
+                            waUseTemplate ? 'border-green-500 bg-white text-green-700' : 'border-gray-200 text-gray-500 bg-white'
+                          )}
+                        >📋 Modèle Solargeo</button>
+                        <button
+                          onClick={() => setWaUseTemplate(false)}
+                          className={cn('flex-1 py-2 rounded-lg text-xs font-medium border-2 transition-all',
+                            !waUseTemplate ? 'border-green-500 bg-white text-green-700' : 'border-gray-200 text-gray-500 bg-white'
+                          )}
+                        >💬 Message libre</button>
+                      </div>
+                      {waUseTemplate && (
+                        <div>
+                          <p className="text-xs text-green-700 mb-2">Image <strong>obligatoire</strong> pour le modèle Solargeo :</p>
+                          {waCampaignImageUrl ? (
+                            <div className="relative">
+                              <img src={waCampaignImageUrl} alt="Aperçu" className="w-full max-h-32 object-cover rounded-lg border border-green-200" />
+                              <button
+                                onClick={() => setWaCampaignImageUrl('')}
+                                className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-xs"
+                              >✕</button>
+                            </div>
+                          ) : (
+                            <label className="flex items-center justify-center gap-2 px-3 py-3 border-2 border-dashed border-green-300 rounded-lg cursor-pointer hover:bg-green-100 transition-colors">
+                              {waCampaignUploading
+                                ? <span className="text-xs text-green-600">Envoi en cours...</span>
+                                : <><span className="text-lg">🖼️</span><span className="text-xs text-green-700 font-medium">Choisir une image depuis l'ordinateur</span></>
+                              }
+                              <input type="file" className="hidden" accept="image/*" onChange={handleWaCampaignImageUpload} disabled={waCampaignUploading} />
+                            </label>
+                          )}
+                        </div>
+                      )}
+                      {!waUseTemplate && (
+                        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          ⚠️ Le message libre ne fonctionne que si le client a écrit en premier dans les 24h.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {newCampaign.channel === 'EMAIL' && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
@@ -652,16 +803,18 @@ ${imgBlock}
                     </div>
                   )}
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Message</label>
-                    <textarea
-                      value={newCampaign.customContent}
-                      onChange={e => setNewCampaign(p => ({ ...p, customContent: e.target.value }))}
-                      placeholder="Rédigez votre message ou sélectionnez un template..."
-                      className="w-full h-32 px-3 py-2.5 text-sm border border-gray-200 rounded-lg resize-none outline-none focus:border-brand-400"
-                    />
-                    <span className="text-xs text-gray-400">{newCampaign.customContent.length} caractères</span>
-                  </div>
+                  {!(newCampaign.channel === 'WHATSAPP' && waUseTemplate) && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Message</label>
+                      <textarea
+                        value={newCampaign.customContent}
+                        onChange={e => setNewCampaign(p => ({ ...p, customContent: e.target.value }))}
+                        placeholder="Rédigez votre message ou sélectionnez un template..."
+                        className="w-full h-32 px-3 py-2.5 text-sm border border-gray-200 rounded-lg resize-none outline-none focus:border-brand-400"
+                      />
+                      <span className="text-xs text-gray-400">{newCampaign.customContent.length} caractères</span>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Planification</label>
@@ -671,6 +824,26 @@ ${imgBlock}
                       onChange={e => setNewCampaign(p => ({ ...p, scheduledAt: e.target.value }))}
                       className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg outline-none focus:border-brand-400"
                     />
+                  </div>
+
+                  {/* Toggle Exclure déjà contactés */}
+                  <div className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl border border-gray-200">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Exclure les déjà contactés</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Ne pas renvoyer aux contacts qui ont déjà reçu un message sur ce canal</p>
+                    </div>
+                    <button
+                      onClick={() => setExcludeAlreadyContacted(v => !v)}
+                      className={cn(
+                        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0',
+                        excludeAlreadyContacted ? 'bg-brand-600' : 'bg-gray-300'
+                      )}
+                    >
+                      <span className={cn(
+                        'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                        excludeAlreadyContacted ? 'translate-x-6' : 'translate-x-1'
+                      )} />
+                    </button>
                   </div>
 
                   <div className="flex gap-3 pt-2">
